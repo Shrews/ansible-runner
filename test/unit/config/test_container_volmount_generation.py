@@ -10,6 +10,7 @@ import pytest
 
 from ansible_runner.config._base import BaseConfig
 from ansible_runner.exceptions import ConfigurationError
+from ansible_runner.containers import engine_factory
 
 
 class Variation(NamedTuple):
@@ -74,9 +75,9 @@ def generate_volmount_args(src_str, dst_str, vol_labels):
 def test_check_not_safe_to_mount_dir(not_safe, mocker):
     """Ensure unsafe directories are not mounted"""
     with pytest.raises(ConfigurationError):
-        bc = BaseConfig()
         mocker.patch("os.path.exists", return_value=True)
-        bc._update_volume_mount_paths(
+        engine = engine_factory.get_engine("podman", BaseConfig())
+        engine._update_volume_mount_paths(
             args_list=[], src_mount_path=not_safe, dst_mount_path=None
         )
 
@@ -86,9 +87,9 @@ def test_check_not_safe_to_mount_file(not_safe, mocker):
     """Ensure unsafe directories for a given file are not mounted"""
     file_path = os.path.join(not_safe, "file.txt")
     with pytest.raises(ConfigurationError):
-        bc = BaseConfig()
         mocker.patch("os.path.exists", return_value=True)
-        bc._update_volume_mount_paths(
+        engine = engine_factory.get_engine("podman", BaseConfig())
+        engine._update_volume_mount_paths(
             args_list=[], src_mount_path=file_path, dst_mount_path=None
         )
 
@@ -98,12 +99,12 @@ def test_duplicate_detection_dst(path, mocker):
     """Ensure no duplicate volume mount entries are created"""
     mocker.patch("os.path.exists", return_value=True)
     mocker.patch("os.path.isdir", return_value=True)
-    base_config = BaseConfig()
+    engine = engine_factory.get_engine("podman", BaseConfig())
 
     def generate():
         for entry in dir_variations:
             for label in labels:
-                base_config._update_volume_mount_paths(
+                engine._update_volume_mount_paths(
                     args_list=first_pass,
                     src_mount_path=path.path,
                     dst_mount_path=entry.path,
@@ -128,7 +129,8 @@ def test_no_dst_all_dirs(path, labels, mocker):
     expected = generate_volmount_args(src_str=src_str, dst_str=dst_str, vol_labels=labels)
 
     result = []
-    BaseConfig()._update_volume_mount_paths(
+    engine = engine_factory.get_engine("podman", BaseConfig())
+    engine._update_volume_mount_paths(
         args_list=result, src_mount_path=path.path, dst_mount_path=None, labels=labels
     )
 
@@ -153,7 +155,8 @@ def test_src_dst_all_dirs(src, dst, labels, mocker):
     expected = generate_volmount_args(src_str=src_str, dst_str=dst_str, vol_labels=labels)
 
     result = []
-    BaseConfig()._update_volume_mount_paths(
+    engine = engine_factory.get_engine("podman", BaseConfig())
+    engine._update_volume_mount_paths(
         args_list=result, src_mount_path=src.path, dst_mount_path=dst.path, labels=labels
     )
 
@@ -178,10 +181,10 @@ def test_src_dst_all_files(path, labels, mocker):
     src_file = os.path.join(path.path, "", "file.txt")
     dest_file = src_file
 
-    base_config = BaseConfig()
     mocker.patch("os.path.exists", return_value=True)
     mocker.patch("os.path.isdir", return_value=False)
-    base_config._update_volume_mount_paths(
+    engine = engine_factory.get_engine("podman", BaseConfig())
+    engine._update_volume_mount_paths(
         args_list=result, src_mount_path=src_file, dst_mount_path=dest_file, labels=labels
     )
 
@@ -210,7 +213,8 @@ def test_src_dst_all_relative_dirs(src, dst, labels, relative, mocker):
     expected = generate_volmount_args(src_str=src_str, dst_str=dst_str, vol_labels=labels)
 
     result = []
-    BaseConfig(container_workdir=workdir)._update_volume_mount_paths(
+    engine = engine_factory.get_engine("podman", BaseConfig(container_workdir=workdir))
+    engine._update_volume_mount_paths(
         args_list=result, src_mount_path=relative_src, dst_mount_path=relative_dst, labels=labels
     )
 
