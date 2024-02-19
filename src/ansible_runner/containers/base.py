@@ -6,7 +6,7 @@ import os
 import stat
 import tempfile
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from base64 import b64encode
 
 from ansible_runner.config._base import BaseConfig, BaseExecutionMode
@@ -26,6 +26,10 @@ class BaseEngine(ABC):
     ##############################################################
     # Public methods
     ##############################################################
+
+    @abstractmethod
+    def extra_arguments(self) -> list[str]:
+        return []
 
     def default_args(self,
                      args: list[str],
@@ -116,12 +120,7 @@ class BaseEngine(ABC):
         env_file_host = os.path.join(self.config.artifact_dir, 'env.list')
         new_args.extend(['--env-file', env_file_host])
 
-        if 'podman' in self.config.process_isolation_executable:
-            # docker doesnt support this option
-            new_args.extend(['--quiet'])
-
-        if 'docker' in self.config.process_isolation_executable:
-            new_args.extend([f'--user={os.getuid()}'])
+        new_args.extend(self.extra_arguments())
 
         new_args.extend(['--name', self.config.container_name])
 
