@@ -46,10 +46,9 @@ from ansible_runner import output
 from ansible_runner import cleanup
 from ansible_runner.utils import dump_artifact, Bunch, register_for_cleanup
 from ansible_runner.utils.capacity import get_cpu_count, get_mem_in_bytes, ensure_uuid
-from ansible_runner.utils.importlib_compat import importlib_metadata
 from ansible_runner.runner import Runner
+from ansible_runner.version import VERSION
 
-VERSION = importlib_metadata.version("ansible_runner")
 
 DEFAULT_ROLES_PATH = os.getenv('ANSIBLE_ROLES_PATH', None)
 DEFAULT_RUNNER_BINARY = os.getenv('RUNNER_BINARY', None)

@@ -14,7 +14,7 @@
 #
 import datetime
 
-from ansible_runner.__main__ import VERSION
+from ansible_runner.version import VERSION
 
 
 # -- Project information -----------------------------------------------------

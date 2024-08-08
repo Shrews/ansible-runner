@@ -37,6 +37,7 @@ from ansible_runner.utils import (
     sanitize_json_response,
     signal_handler,
 )
+from ansible_runner.version import VERSION
 
 logging.getLogger('ansible-runner').addHandler(logging.NullHandler())
 
@@ -98,11 +99,11 @@ def init_runner(**kwargs):
     streamer = kwargs.pop('streamer', None)
     if streamer:
         if streamer == 'transmit':
-            stream_transmitter = Transmitter(**kwargs)
+            stream_transmitter = Transmitter(runner_version=VERSION, **kwargs)
             return stream_transmitter
 
         if streamer == 'worker':
-            stream_worker = Worker(**kwargs)
+            stream_worker = Worker(runner_version=VERSION, **kwargs)
             return stream_worker
 
         if streamer == 'process':

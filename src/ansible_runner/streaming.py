@@ -11,6 +11,7 @@ import traceback
 
 from collections.abc import Mapping
 from functools import wraps
+from packaging.version import Version
 from threading import Event, RLock, Thread
 
 import ansible_runner
@@ -37,7 +38,9 @@ class MockConfig:
 
 
 class Transmitter:
-    def __init__(self, _output=None, **kwargs):
+    def __init__(self, runner_version: str, _output=None, **kwargs):
+        self.runner_version = runner_version
+
         if _output is None:
             _output = sys.stdout.buffer
         self._output = _output
@@ -53,7 +56,12 @@ class Transmitter:
 
     def run(self):
         self._output.write(
-            json.dumps({'kwargs': self.kwargs}, cls=UUIDEncoder).encode('utf-8')
+            json.dumps(
+            {
+                    'runner_version': self.runner_version,
+                    'kwargs': self.kwargs
+                },
+                cls=UUIDEncoder).encode('utf-8')
         )
         self._output.write(b'\n')
         self._output.flush()
@@ -69,7 +77,9 @@ class Transmitter:
 
 
 class Worker:
-    def __init__(self, _input=None, _output=None, keepalive_seconds: float | None = None, **kwargs):
+    def __init__(self, runner_version: str, _input=None, _output=None, keepalive_seconds: float | None = None, **kwargs):
+        self.runner_version = runner_version
+
         if _input is None:
             _input = sys.stdin.buffer
         if _output is None:
@@ -187,6 +197,14 @@ class Worker:
                     self.finished_callback(None)  # send eof line
                     return self.status, self.rc
 
+                if 'runner_version' in data:
+                    if Version(self.runner_version) != Version(data['runner_version']):
+                        self.status_handler({
+                            'status': 'error',
+                            'job_explanation': f"Streaming data version mismatch: worker {self.runner_version}, data {data['runner_version']}",
+                        }, None)
+                        self.finished_callback(None)  # send eof line
+                        return self.status, self.rc
                 if 'kwargs' in data:
                     self.job_kwargs = self.update_paths(data['kwargs'])
                 elif 'zipfile' in data:
