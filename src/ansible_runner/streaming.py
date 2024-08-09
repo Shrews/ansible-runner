@@ -1,6 +1,7 @@
 from __future__ import annotations  # allow newer type syntax until 3.10 is our minimum
 
 import codecs
+import inspect
 import json
 import os
 import stat
@@ -188,6 +189,17 @@ class Worker:
                     return self.status, self.rc
 
                 if 'kwargs' in data:
+                    spec = inspect.getfullargspec(ansible_runner.interface.run)
+                    diff = set(data['kwargs']).difference(set(spec.kwonlyargs))
+                    if diff:
+                        self.status_handler(
+                            {
+                                'status': 'error',
+                                'job_explanation': f'Unhandled keyword argument(s) in transmitted data: {diff}'
+                            },
+                            None)
+                        self.finished_callback(None)  # send eof line
+                        return self.status, self.rc
                     self.job_kwargs = self.update_paths(data['kwargs'])
                 elif 'zipfile' in data:
                     try:

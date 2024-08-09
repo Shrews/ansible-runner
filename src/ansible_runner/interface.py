@@ -133,7 +133,35 @@ def init_runner(**kwargs):
                   finished_callback=finished_callback)
 
 
-def run(**kwargs):
+def run(*,
+        private_data_dir,
+        ident,
+        json_mode,
+        playbook,
+        module, module_args,
+        host_pattern, inventory,
+        role, roles_path,
+        envvars, extravars,
+        passwords,
+        settings,
+        ssh_key,
+        cmdline,
+        suppress_env_files,
+        limit, forks, verbosity, quiet,
+        artifact_dir, project_dir,
+        rotate_artifacts,
+        timeout,
+        streamer,
+        _input, _output,
+        event_handler, status_handler, artifacts_handler,
+        cancel_callback, finished_callback,
+        process_isolation, process_isolation_executable, process_isolation_path,
+        process_isolation_hide_paths, process_isolation_show_paths, process_isolation_ro_paths,
+        container_image, container_volume_mounts, container_options,
+        directory_isolation_base_path,
+        fact_cache, fact_cache_type,
+        omit_event_data, only_failed_event_data, check_job_event_data,
+        ):
     '''
     Run an Ansible Runner task in the foreground and return a Runner object when complete.
 
