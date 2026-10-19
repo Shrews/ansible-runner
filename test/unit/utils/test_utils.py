@@ -1,5 +1,6 @@
 # pylint: disable=W0212
 
+import base64
 import datetime
 import io
 import json
@@ -7,6 +8,7 @@ import os
 import signal
 import time
 import stat
+import zipfile
 
 from pathlib import Path
 
@@ -64,12 +66,11 @@ def test_sanitize_container_name(container_name, expected_name):
 
 
 @pytest.mark.parametrize('symlink_dest,check_content', [
-    ('/bin', []),
     ('ordinary_file.txt', ['my_link']),
     ('ordinary_directory', ['my_link/dir_file.txt']),
     ('.', ['my_link/ordinary_directory/dir_file.txt', 'my_link/my_link/ordinary_file.txt']),
     ('filedoesnotexist.txt', [])
-], ids=['global', 'local', 'directory', 'recursive', 'bad'])
+], ids=['local', 'directory', 'recursive', 'bad'])
 def test_transmit_symlink(tmp_path, symlink_dest, check_content):
     symlink_dest = Path(symlink_dest)
 
@@ -121,6 +122,91 @@ def test_transmit_symlink(tmp_path, symlink_dest, check_content):
         assert abs_path.exists(), f'Expected "{fname}" in target dir to be a file with content.'
         with open(abs_path, 'r') as f:
             assert f.read() == 'hello world'
+
+
+def test_transmit_symlink_to_external_path_is_rejected(tmp_path):
+    """Symbolic links whose target falls OUTSIDE the destination directory
+    must be refused, not faithfully recreated. Round-tripping an absolute /
+    out-of-tree symlink is what enables the symlink-tar-slip primitive.
+    """
+    pdd = tmp_path / "src"
+    pdd.mkdir()
+    (pdd / "ordinary_file.txt").write_text("hello")
+    (pdd / "my_link").symlink_to("/bin")
+    buf = io.BytesIO()
+    buf.name = "not_stdout"
+    stream_dir(str(pdd), buf)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    buf.seek(0)
+    header = json.loads(buf.readline().strip())
+    with pytest.raises(zipfile.BadZipFile, match="escape"):
+        unstream_dir(buf, header["zipfile"], str(dest))
+    assert not (dest / "my_link").exists()
+
+
+def _build_symlink_escape_zip(out_path, escape_dir):
+    """Build a zip with a symlink entry that escapes outside escape_dir plus a
+    regular-file entry that traverses through that symlink.
+    """
+    s_iflnk_flag = 0xA000
+    external = (0o777 | s_iflnk_flag) << 16
+    with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        link_info = zipfile.ZipInfo("evil-link")
+        link_info.create_system = 3
+        link_info.external_attr = external
+        zf.writestr(link_info, str(escape_dir).encode())
+        file_info = zipfile.ZipInfo("evil-link/PWNED.txt")
+        file_info.create_system = 3
+        file_info.external_attr = (0o644 | 0x8000) << 16
+        zf.writestr(file_info, b"SENTINEL")
+
+
+def test_unstream_dir_rejects_symlink_target_escape(tmp_path):
+    """Refuse to extract a zip whose symlink entry targets a directory outside
+    the destination, even when the next file entry traverses through it.
+    """
+    extract_dir = tmp_path / "private_data_dir"
+    extract_dir.mkdir()
+    escape_dir = tmp_path / "outside"
+    escape_dir.mkdir()
+    zip_path = tmp_path / "malicious.zip"
+    _build_symlink_escape_zip(str(zip_path), str(escape_dir))
+    # Wrap the raw zip in the json+base64 framing unstream_dir reads.
+    body = zip_path.read_bytes()
+    encoded = base64.b64encode(body)
+    stream = io.BytesIO(
+        json.dumps({"zipfile": len(body)}).encode() + b"\n" + encoded
+    )
+    first_line = stream.readline()
+    assert b"zipfile" in first_line
+    with pytest.raises(zipfile.BadZipFile, match="escape"):
+        unstream_dir(stream, len(body), str(extract_dir))
+    # The sentinel file MUST NOT exist in the escape directory; the planted
+    # link MUST NOT survive in the extraction directory.
+    assert not (escape_dir / "PWNED.txt").exists()
+    assert not (extract_dir / "evil-link").exists()
+
+
+def test_unstream_dir_preserves_safe_symlinks(tmp_path):
+    """Round-trip a tree that contains a SAFE symlink (target inside the
+    destination) and assert the symlink survives.
+    """
+    pdd = tmp_path / "src"
+    pdd.mkdir()
+    (pdd / "real.txt").write_text("payload")
+    (pdd / "alias").symlink_to("real.txt")
+    buf = io.BytesIO()
+    buf.name = "not_stdout"
+    stream_dir(str(pdd), buf)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    buf.seek(0)
+    header = json.loads(buf.readline().strip())
+    unstream_dir(buf, header["zipfile"], str(dest))
+    assert (dest / "alias").is_symlink()
+    assert os.readlink(dest / "alias") == "real.txt"
+    assert (dest / "real.txt").read_text() == "payload"
 
 
 @pytest.mark.timeout(timeout=3)

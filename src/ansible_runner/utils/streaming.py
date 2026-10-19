@@ -60,6 +60,19 @@ def stream_dir(source_directory: str, stream: io.FileIO) -> None:
                     encoded_target.write(line)
 
 
+def _is_within_directory(parent: str, child: str) -> bool:
+    """Return True iff child resolves to a path inside parent (or equal to it).
+    Uses ``os.path.realpath`` on both sides so the comparison reflects what
+    ``open``/``os.symlink`` would actually do on disk (symlinks resolved,
+    ``..`` normalized).
+    """
+    parent_abs = os.path.realpath(parent)
+    child_abs = os.path.realpath(child)
+    if child_abs == parent_abs:
+        return True
+    return child_abs.startswith(parent_abs + os.sep)
+
+
 def unstream_dir(stream: io.FileIO, length: int, target_directory: str) -> None:
     # NOTE: caller needs to process exceptions
     with tempfile.NamedTemporaryFile() as tmp:
@@ -75,12 +88,51 @@ def unstream_dir(stream: io.FileIO, length: int, target_directory: str) -> None:
 
                     remaining -= chunk_size
 
+        # Snapshot the realpath of the destination once. We use it to bound
+        # every member, link target and ancestor we touch below.
+        target_root = os.path.realpath(target_directory)
+
         with zipfile.ZipFile(tmp.name, "r") as archive:
             # Fancy extraction in order to preserve permissions
             # AWX relies on the execution bit, in particular, for inventory
             # https://www.burgundywall.com/post/preserving-file-perms-with-python-zipfile-module
             for info in archive.infolist():
+                # Reject member names whose normalized path would escape the
+                # destination (absolute paths or paths starting with "..").
+                # zipfile.ZipFile.extract already rejects these, but we want
+                # the gate in front of the symlink-ancestor check below so the
+                # subsequent logic is unconditionally safe.
+                member_norm = os.path.normpath(info.filename)
+                if (os.path.isabs(member_norm)
+                        or member_norm == ".."
+                        or member_norm.startswith(".." + os.sep)):
+                    raise zipfile.BadZipFile(
+                        "Refusing to extract member that escapes target directory: "
+                        "%r" % info.filename
+                    )
+
                 out_path = os.path.join(target_directory, info.filename)
+
+                # Walk every ancestor of out_path up to the target directory.
+                # If any ancestor is a symbolic link, an earlier entry has
+                # planted a link we would otherwise traverse during
+                # archive.extract(); refuse rather than write through it.
+                #
+                # ancestor is derived from the raw target_directory (via
+                # out_path), so bound the walk with the normalized raw path
+                # rather than target_root (its realpath): when target_directory
+                # is itself a symlink the two can differ in both length and
+                # string, which would break the loop's stop condition.
+                target_norm = os.path.normpath(target_directory)
+                ancestor = os.path.dirname(os.path.normpath(out_path))
+                while (len(ancestor) > len(target_norm)
+                        and ancestor != target_norm):
+                    if os.path.islink(ancestor):
+                        raise zipfile.BadZipFile(
+                            "Refusing to write through symlinked ancestor: %r"
+                            % ancestor
+                        )
+                    ancestor = os.path.dirname(ancestor)
 
                 perms = info.external_attr >> 16
                 mode = stat.filemode(perms)
@@ -110,6 +162,19 @@ def unstream_dir(stream: io.FileIO, length: int, target_directory: str) -> None:
                 if is_symlink:
                     with open(out_path) as fd:
                         link = fd.read()
+                    # Resolve the link target against the link's own parent
+                    # (matches the semantics os.symlink would use at lookup
+                    # time) and require it to land inside target_root.
+                    link_parent = os.path.dirname(out_path)
+                    resolved = os.path.realpath(
+                        os.path.join(link_parent, link)
+                    )
+                    if not _is_within_directory(target_root, resolved):
+                        os.remove(out_path)
+                        raise zipfile.BadZipFile(
+                            "Refusing to create symbolic link that escapes "
+                            "target directory: %r -> %r" % (out_path, link)
+                        )
                     os.remove(out_path)
                     os.symlink(link, out_path)
                 else:
